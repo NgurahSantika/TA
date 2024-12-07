@@ -91,22 +91,22 @@ void connectToMQTT() {
 int getFingerprintID() {
   int id = finger.getImage();
   if (id == FINGERPRINT_NOFINGER) {
-    return 0;
+    return -1;
   } else if (id != FINGERPRINT_OK) {
     Serial.println("Gagal membaca gambar sidik jari.");
-    return -1;
+    return -2;
   }
 
   id = finger.image2Tz();
   if (id != FINGERPRINT_OK) {
     Serial.println("Gagal mengonversi gambar ke template.");
-    return -1;
+    return -2;
   }
 
   id = finger.fingerFastSearch();
   if (id != FINGERPRINT_OK) {
     Serial.println("Sidik jari tidak ditemukan.");
-    return -1;
+    return -3;
   }
 
   Serial.print("Sidik jari ditemukan dengan ID: ");
@@ -117,30 +117,38 @@ int getFingerprintID() {
 
 // Fungsi untuk enroll sidik jari
 void enrollFingerprint() {
-  int id = 0; // ID sidik jari
+  int id = -1; // ID sidik jari
   String employeeID; // ID karyawan yang akan disimpan
 
   // Meminta input EmployeeID dari pengguna
-  Serial.println("Masukkan EmployeeID:");
-  while (!Serial.available());  // Tunggu input dari Serial Monitor
-  employeeID = Serial.readStringUntil('\n');  // Baca input hingga newline
-  employeeID.trim();  // Hilangkan spasi atau karakter ekstra
-  
-  if (employeeID.length() == 0) {
-    Serial.println("EmployeeID tidak boleh kosong. Proses dibatalkan.");
-    return;
+  while (true) {
+    Serial.println("Masukkan EmployeeID:");
+    while (!Serial.available()) {
+      delay(100); // Tunggu hingga pengguna mengetikkan EmployeeID
+    }
+    employeeID = Serial.readStringUntil('\n');  // Baca input hingga newline
+    employeeID.trim();  // Hilangkan spasi atau karakter ekstra
+
+    if (employeeID.length() == 0) {
+      Serial.println("EmployeeID tidak boleh kosong. Silakan coba lagi.");
+    } else {
+      break; // Keluar dari loop jika EmployeeID valid
+    }
   }
 
   // Meminta input ID untuk sidik jari
-  while (id < 1 || id > 127) {
+  do {
     Serial.println("Masukkan ID untuk sidik jari (1-127):");
-    while (!Serial.available());  // Tunggu input
+    while (!Serial.available()) {
+      delay(100); // Tunggu hingga pengguna mengetikkan ID
+    }
     id = Serial.parseInt();  // Ambil input sebagai integer
-    
+
     if (id < 1 || id > 127) {
       Serial.println("ID tidak valid, harus antara 1-127.");
+      id = -1; // Reset ke nilai awal jika tidak valid
     }
-  }
+  } while (id == -1); // Ulangi hingga ID valid dimasukkan
 
   // Proses pendaftaran sidik jari
   Serial.println("Letakkan jari Anda di sensor.");
@@ -184,9 +192,9 @@ void deleteFingerprint() {
   Serial.println("Letakkan sidik jari untuk menghapus:");
 
   int id = -1;
-  while (id == -1) {
+  while (id < 0) {
     // Cek apakah ada sidik jari yang diletakkan
-    id = getFingerprintID();
+    id = getFingerprintID();  // Fungsi untuk mendapatkan ID sidik jari
 
     // Jika tidak ada sidik jari, beri tahu pengguna untuk meletakkan jari
     if (id == -1) {
@@ -208,11 +216,19 @@ void deleteFingerprint() {
   Serial.println("? (y/n):");
 
   // Tunggu input dari serial
-  while (!Serial.available());
-  char confirm = Serial.read();
+  while (!Serial.available());  // Tunggu input
+  char confirm = Serial.read();  // Baca konfirmasi
   if (confirm == 'y' || confirm == 'Y') {
     if (finger.deleteModel(id) == FINGERPRINT_OK) {
       Serial.println("Sidik jari berhasil dihapus.");
+
+      // Hapus EmployeeID terkait dari EEPROM
+      int addr = id * 10;  // Asumsi setiap ID memiliki alokasi 10 byte di EEPROM
+      for (int i = 0; i < 10; i++) {
+        EEPROM.write(addr + i, 0);  // Set 0 untuk setiap byte yang terkait
+      }
+      EEPROM.commit();  // Simpan perubahan ke EEPROM
+      Serial.println("Data EmployeeID yang terkait juga berhasil dihapus.");
     } else {
       Serial.println("Gagal menghapus sidik jari.");
     }
@@ -221,43 +237,51 @@ void deleteFingerprint() {
   }
 }
 
+
 // Fungsi untuk mengedit sidik jari
 void editFingerprint() {
   Serial.println("Letakkan sidik jari untuk mengedit:");
 
   int id = -1;
-  while (id == -1) {
-    // Cek apakah ada sidik jari yang diletakkan
+  while (id < 0) {
     id = getFingerprintID();
-
-    // Jika tidak ada sidik jari, beri tahu pengguna untuk meletakkan jari
     if (id == -1) {
       Serial.println("Sidik jari tidak terdeteksi. Silakan letakkan sidik jari.");
-      delay(1000); // Beri sedikit waktu sebelum mencoba lagi
-    } else {
-      break;  // Keluar dari loop jika sidik jari terdeteksi
+      delay(1000);
+    } else if (id == -2) {
+      Serial.println("Gagal membaca gambar sidik jari. Silakan coba lagi.");
+      delay(1000);
+    } else if (id == -3) {
+      Serial.println("Sidik jari tidak ditemukan di database. Proses dibatalkan.");
+      return; // Keluar dari fungsi jika tidak ditemukan
+    } else if (id > 0) {
+      break; // ID valid ditemukan
     }
   }
 
-  // Setelah berhasil mendeteksi sidik jari, tampilkan ID sidik jari
   Serial.print("Sidik jari dengan ID ");
   Serial.print(id);
   Serial.println(" ditemukan. Mengedit...");
 
-  // Mengonfirmasi pengeditan sidik jari
   Serial.print("Konfirmasi pengeditan sidik jari ID ");
   Serial.print(id);
   Serial.println("? (y/n):");
 
-  // Tunggu input dari serial
   while (!Serial.available());
   char confirm = Serial.read();
   if (confirm == 'y' || confirm == 'Y') {
-    // Menghapus sidik jari yang lama
     if (finger.deleteModel(id) == FINGERPRINT_OK) {
       Serial.println("Data lama berhasil dihapus. Silakan enroll ulang:");
 
-      // Enroll sidik jari yang baru
+      // Hapus EmployeeID terkait dari EEPROM
+      int addr = id * 10;
+      for (int i = 0; i < 10; i++) {
+        EEPROM.write(addr + i, 0); // Set 0 untuk setiap karakter
+      }
+      EEPROM.commit();
+      Serial.println("EmployeeID lama berhasil dihapus dari EEPROM.");
+
+      // Enroll ulang sidik jari dan EmployeeID
       enrollFingerprint();
     } else {
       Serial.println("Gagal menghapus data lama.");
@@ -266,6 +290,7 @@ void editFingerprint() {
     Serial.println("Pengeditan dibatalkan.");
   }
 }
+
 
 ///////////////////////////////////////////////////////
 // Fungsi untuk menampilkan total sidik jari yang terdaftar
