@@ -1,0 +1,293 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <Adafruit_Fingerprint.h>
+
+// Informasi jaringan WiFi
+#define WIFI_SSID "TRISKA_sunset"
+#define WIFI_PASSWORD "10922901triska"
+
+// Informasi MQTT broker
+#define MQTT_SERVER "192.168.0.101"
+#define MQTT_PORT 1883
+#define MQTT_USER "santika"
+#define MQTT_PASS "santika123"
+
+// Topik MQTT
+#define MQTT_TOPIC_STATUS "IOT/STATUS"
+#define MQTT_TOPIC_FINGERPRINT "IOT/FINGERPRINT"
+
+// Pin untuk sensor sidik jari
+#define Finger_Rx 16
+#define Finger_Tx 17
+
+// Pin LED 
+#define LED_RED 21
+#define LED_YELLOW 19
+#define LED_GREEN 18
+
+//Pin buzzer
+#define BUZZER_PIN 32
+
+// Objek untuk sensor sidik jari
+HardwareSerial mySerial(2); // UART2 untuk komunikasi serial
+Adafruit_Fingerprint finger(&mySerial);
+
+// Objek WiFi dan MQTT
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+uint8_t id = 1; // ID awal untuk sidik jari
+
+// Fungsi untuk menghubungkan ke WiFi
+void connectToWiFi() {
+  Serial.print("Menghubungkan ke WiFi: ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(LED_RED, HIGH); // MQTT belum terhubung
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi Terhubung");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+// Callback untuk menangani pesan MQTT masuk
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Pesan diterima di topik: ");
+  Serial.println(topic);
+  Serial.print("Pesan: ");
+  for (unsigned int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
+// Fungsi untuk menghubungkan ke MQTT broker
+void connectToMQTT() {
+  while (!client.connected()) {
+    Serial.print("Menghubungkan ke MQTT Broker...");
+    if (client.connect("ESP32_Client", MQTT_USER, MQTT_PASS)) {
+      Serial.println("Terhubung");
+      digitalWrite(LED_RED, LOW); // Matikan LED Merah setelah terhubung
+      digitalWrite(BUZZER_PIN, LOW); // Matikan buzzer setelah terhubung
+      client.subscribe(MQTT_TOPIC_STATUS);
+      client.publish(MQTT_TOPIC_STATUS, "ESP32 siap terhubung!");
+       for (int i = 0; i < 2; i++) {   // Buzzer berbunyi 2 kali cepat
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(50);                 // Durasi bunyi buzzer
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(50);                 // Jeda antar bunyi
+    } 
+    } else {
+      digitalWrite(LED_RED, HIGH); // MQTT belum terhubung 
+      Serial.print("Gagal. Status: ");
+      Serial.println(client.state());
+      delay(2000);
+    }
+  }
+}
+
+// Fungsi untuk menghapus semua sidik jari
+void deleteAllFingerprints() {
+  Serial.println("Menghapus semua data sidik jari...");
+  if (finger.emptyDatabase() == FINGERPRINT_OK) {
+    Serial.println("Semua sidik jari berhasil dihapus.");
+       for (int i = 0; i < 2; i++) {   // Buzzer berbunyi 2 kali cepat
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(50);                 // Durasi bunyi buzzer
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(50);                 // Jeda antar bunyi
+    } 
+    id = 1; // Reset ID ke awal
+  } else {
+    Serial.println("Gagal menghapus sidik jari.");
+  }
+}
+
+// Fungsi untuk membaca jumlah sidik jari tersimpan
+int getTotalFingerprint() {
+  uint8_t result = finger.getTemplateCount();
+  if (result == FINGERPRINT_OK) {
+    Serial.print("Jumlah sidik jari: ");
+    return finger.templateCount;
+  } else {
+    Serial.println("Gagal mendapatkan jumlah sidik jari.");
+    return 0;
+  }
+}
+
+
+// Fungsi untuk mendaftarkan sidik jari baru
+void enrollFingerprint() {
+  int totalFingerprints = getTotalFingerprint();
+  id = totalFingerprints + 1;
+
+  if (id > 127) {
+    Serial.println("ID terlalu besar. Tidak dapat mendaftarkan lebih banyak sidik jari.");
+    return;
+  }
+
+  Serial.print("Mendaftarkan sidik jari baru dengan ID: ");
+  Serial.println(id);
+
+  while (!getFingerprintEnroll());
+}
+
+// Fungsi untuk membaca sidik jari
+int getFingerprintID() {
+  uint8_t p = finger.getImage();
+  if (p != FINGERPRINT_OK) {
+    if (p == FINGERPRINT_NOFINGER) {
+      Serial.println("Tidak ada sidik jari terdeteksi.");
+    } else {
+      Serial.println("Gagal membaca gambar sidik jari.");
+    }
+    return 0; // Tidak ada sidik jari
+  }
+ Serial.println("Sidik jari berhasil diambil.");
+
+  p = finger.image2Tz();
+  if (p != FINGERPRINT_OK) {
+    return -1;
+  }
+
+  p = finger.fingerFastSearch();
+  if (p != FINGERPRINT_OK) {
+    Serial.println("Sidik jari tidak cocok dengan template yang ada.");
+    return -1; // Tidak ada kecocokan
+  }
+
+  return finger.fingerID; // ID yang cocok
+}
+
+// Fungsi untuk mengirim ID sidik jari ke MQTT
+void sendFingerprintToMQTT(int fingerID) {
+  if (client.connected()) {
+    String payload = "Fingerprint ID: " + String(fingerID);
+    client.publish(MQTT_TOPIC_FINGERPRINT, payload.c_str());
+    Serial.println("Fingerprint ID dikirim ke MQTT: " + payload);
+     for (int i = 0; i < 2; i++) {   // Buzzer berbunyi 2 kali cepat
+        digitalWrite(LED_YELLOW, HIGH);
+        delay(500);                 // Durasi LED
+        digitalWrite(LED_YELLOW, LOW);
+        delay(100);                 // Jeda LED
+    } 
+  } else {
+    Serial.println("Koneksi MQTT tidak tersedia. Pesan tidak terkirim");
+     for (int i = 0; i < 2; i++) {   // Buzzer berbunyi 2 kali cepat
+        digitalWrite(LED_RED, HIGH);
+        delay(100);                 // Durasi LED
+        digitalWrite(LED_RED, LOW);
+        delay(50);                 // Jeda LED
+    } 
+  }
+}
+
+// Fungsi untuk proses pendaftaran sidik jari
+uint8_t getFingerprintEnroll() {
+  int p = -1;
+
+  // Pendaftaran pertama
+  while (p != FINGERPRINT_OK) {
+    p = finger.getImage();
+    if (p == FINGERPRINT_NOFINGER) Serial.print(".");
+  }
+
+  p = finger.image2Tz(1);
+  if (p != FINGERPRINT_OK) return p;
+
+  delay(2000);
+  while (finger.getImage() != FINGERPRINT_NOFINGER);
+
+  while (finger.getImage() != FINGERPRINT_OK);
+
+  p = finger.image2Tz(2);
+  if (p != FINGERPRINT_OK) return p;
+
+  p = finger.createModel();
+  if (p != FINGERPRINT_OK) return p;
+
+  p = finger.storeModel(id);
+  if (p != FINGERPRINT_OK) return p;
+
+  Serial.println("Sidik jari berhasil disimpan!");
+  return true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  mySerial.begin(57600, SERIAL_8N1, Finger_Rx, Finger_Tx);
+
+  pinMode(LED_RED, OUTPUT);
+  digitalWrite(LED_RED, LOW); // Pastikan LED merah mati di awal
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT); // Konfigurasi buzzer
+  digitalWrite(BUZZER_PIN, LOW); // Matikan buzzer
+
+  connectToWiFi();
+
+  client.setServer(MQTT_SERVER, MQTT_PORT);
+  client.setCallback(mqttCallback);
+
+  if (!finger.verifyPassword()) {
+    Serial.println("Sensor sidik jari tidak terdeteksi!");
+    while (true) { delay(1); }
+  }
+
+
+  Serial.println("Sensor sidik jari siap!");
+}
+
+
+
+void loop() {
+  if (!client.connected()) {
+    connectToMQTT();
+  }
+  client.loop();
+
+    digitalWrite(LED_YELLOW, HIGH); // Indikasi proses sedang berlangsung
+    int fingerID = getFingerprintID(); // Lakukan pembacaan sidik jari
+    digitalWrite(LED_YELLOW, LOW); // Matikan LED Kuning setelah selesai
+  if (fingerID > 0) {  // Jika sidik jari berhasil dikenali
+    sendFingerprintToMQTT(fingerID); // Kirim ID sidik jari
+    digitalWrite(LED_GREEN, HIGH);   // LED hijau menyala
+    digitalWrite(LED_RED, LOW);      // Pastikan LED merah mati
+    digitalWrite(BUZZER_PIN, HIGH); // Buzzer berbunyi 1 kali
+    delay(100);                     // Durasi buzzer
+    digitalWrite(BUZZER_PIN, LOW);  // Matikan buzzer
+    delay(1000);
+    digitalWrite(LED_GREEN, LOW);    // LED hijau mati
+  } else if (fingerID == 0) {  // Tidak ada sidik jari terdeteksi
+    digitalWrite(LED_RED, LOW);      // LED merah mati setelah jeda
+  } else {  // Jika terjadi kesalahan (fingerID < 0)
+    digitalWrite(LED_RED, HIGH); 
+    for (int i = 0; i < 2; i++) {   // Buzzer berbunyi 2 kali cepat
+        digitalWrite(BUZZER_PIN, HIGH);
+        delay(100);                 // Durasi bunyi buzzer
+        digitalWrite(BUZZER_PIN, LOW);
+        delay(50);                 // Jeda antar bunyi
+    } 
+    delay(1000);
+    digitalWrite(LED_RED, LOW);    // LED merah menyala
+  }
+  Serial.println(getTotalFingerprint());
+
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    if (command == "delete") {
+      deleteAllFingerprints();
+    } else if (command == "enroll") {
+      enrollFingerprint();
+    }
+  }
+  
+  
+
+  delay(1000);
+}
