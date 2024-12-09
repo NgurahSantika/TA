@@ -85,8 +85,34 @@ void connectToMQTT() {
     }
   }
 }
+// Fungsi untuk indikasi error
+void error() {
+  Serial.println("*****************************************************");
+  digitalWrite(LED_RED, HIGH);
+  for (int i = 0; i < 3; i++) { 
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(100); 
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(70); 
+  }
+  delay(500); 
+  digitalWrite(LED_RED, HIGH);
+}
+
+// Fungsi untuk indikasi success
+void success() {
+  Serial.println("******************************************************");
+  digitalWrite(LED_GREEN, HIGH);
+  for (int i = 0; i < 1; i++) { 
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(250); 
+    digitalWrite(BUZZER_PIN, LOW);
+    delay(100); 
+  }
+  delay(500); 
+  digitalWrite(LED_GREEN, LOW); 
+}
 ////////////////////////////////////////////////////////////////////////
-// Fungsi untuk mendapatkan ID sidik jari
 // Fungsi untuk mendapatkan ID sidik jari
 int getFingerprintID() {
   int id = finger.getImage();
@@ -94,21 +120,24 @@ int getFingerprintID() {
     return -1;
   } else if (id != FINGERPRINT_OK) {
     Serial.println("Gagal membaca gambar sidik jari.");
+    error();
     return -2;
   }
 
   id = finger.image2Tz();
   if (id != FINGERPRINT_OK) {
     Serial.println("Gagal mengonversi gambar ke template.");
+    error();
     return -2;
   }
 
   id = finger.fingerFastSearch();
   if (id != FINGERPRINT_OK) {
     Serial.println("Sidik jari tidak ditemukan.");
+    error();
     return -3;
   }
-
+  success();
   Serial.print("Sidik jari ditemukan dengan ID: ");
   Serial.println(finger.fingerID);
   return finger.fingerID;
@@ -131,6 +160,7 @@ void enrollFingerprint() {
 
     if (employeeID.length() == 0) {
       Serial.println("EmployeeID tidak boleh kosong. Silakan coba lagi.");
+      error();
     } else {
       break; // Keluar dari loop jika EmployeeID valid
     }
@@ -146,6 +176,7 @@ void enrollFingerprint() {
 
     if (id < 1 || id > 127) {
       Serial.println("ID tidak valid, harus antara 1-127.");
+      error();
       id = -1; // Reset ke nilai awal jika tidak valid
     }
   } while (id == -1); // Ulangi hingga ID valid dimasukkan
@@ -163,11 +194,13 @@ void enrollFingerprint() {
   while (finger.getImage() != FINGERPRINT_OK);
   if (finger.image2Tz(2) != FINGERPRINT_OK) {
     Serial.println("Gagal memproses gambar kedua.");
+    error();
     return;
   }
 
   if (finger.createModel() != FINGERPRINT_OK) {
     Serial.println("Sidik jari tidak cocok.");
+    error();
     return;
   }
 
@@ -175,10 +208,12 @@ void enrollFingerprint() {
     Serial.println("Sidik jari berhasil disimpan.");
   } else {
     Serial.println("Gagal menyimpan sidik jari.");
+    error();
     return;
   }
 
   // Simpan EmployeeID ke EEPROM
+  success();
   saveEmployeeIDToEEPROM(id, employeeID);
   Serial.print("Sidik jari dengan ID ");
   Serial.print(id);
@@ -271,6 +306,7 @@ void editFingerprint() {
   char confirm = Serial.read();
   if (confirm == 'y' || confirm == 'Y') {
     if (finger.deleteModel(id) == FINGERPRINT_OK) {
+      success();
       Serial.println("Data lama berhasil dihapus. Silakan enroll ulang:");
 
       // Hapus EmployeeID terkait dari EEPROM
@@ -405,6 +441,7 @@ String searchEmployeeID(int fingerprintID) {
 
   if (employeeID.length() == 0 || employeeID == "          ") { // 10 spasi
     Serial.println("EmployeeID tidak ditemukan.");
+    error();
     return "";
   }
 
@@ -462,13 +499,13 @@ void loop() {
       Serial.print("Sidik jari cocok dengan EmployeeID: ");
       Serial.println(employeeID);
     
-      String message = "Fingerprint ID: " + String(fingerprintID) + " cocok dengan EmployeeID: " + employeeID;
+      String message = employeeID;
       client.publish(MQTT_TOPIC_FINGERPRINT, message.c_str());
-      Serial.println("ID sidik jari terkirim ke MQTT.");
+      Serial.println("terkirim ke MQTT." + message + " dengan ID " + fingerprintID);
     } else {
+    
       Serial.println("Sidik jari ditemukan, tetapi tidak ada data EmployeeID yang terkait.");
     }
-  
   } else if (fingerprintID == -1) {
     // Tidak ada jari
     // Pesan sudah ditampilkan dalam getFingerprintID()
@@ -478,6 +515,7 @@ void loop() {
     // Pesan sudah ditampilkan dalam getFingerprintID()
     Serial.println("Sidik jari tidak dikenali dalam database.");
   }
+  
 
   showTotalFingerprints();
 
