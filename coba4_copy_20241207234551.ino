@@ -3,6 +3,10 @@
 #include <Adafruit_Fingerprint.h>
 #include <map>
 #include <EEPROM.h>
+#include <NTPClient.h> // Pustaka untuk NTP
+#include <WiFiUdp.h>
+#include <TimeLib.h>
+
 
 // Informasi jaringan WiFi
 #define WIFI_SSID "TRISKA_sunset"
@@ -17,6 +21,8 @@
 // Topik MQTT
 #define MQTT_TOPIC_STATUS "IOT/STATUS"
 #define MQTT_TOPIC_FINGERPRINT "IOT/FINGERPRINT"
+#define MQTT_TOPIC_TIME "IOT/TIME"
+
 
 // Pin untuk sensor sidik jari
 #define Finger_Rx 16
@@ -38,7 +44,9 @@ Adafruit_Fingerprint finger(&mySerial);
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-
+//Zona waktu bagian Wita +8 28800
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 28800); // 25200 untuk WIB (UTC+7)
 
 // Fungsi untuk menghubungkan ke WiFi
 void connectToWiFi() {
@@ -54,6 +62,9 @@ void connectToWiFi() {
   Serial.println("\nWiFi Terhubung");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+
+  timeClient.begin();
+  timeClient.update();
 }
 
 // Callback untuk menangani pesan MQTT masuk
@@ -65,7 +76,33 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     Serial.print((char)payload[i]);
   }
   Serial.println();
+  
 }
+
+void sendCurrentTime() {
+  timeClient.update(); // Update time from NTP
+  unsigned long epochTime = timeClient.getEpochTime();  // Get the Unix epoch time
+
+  // Use TimeLib to convert epoch time to human-readable format
+  setTime(epochTime);  // Set the time using TimeLib
+
+  // Get the formatted time from TimeLib
+  String formattedTime = String(hour()) + ":" + String(minute()) + ":" + String(second());
+
+  // Get the date from TimeLib
+  String formattedDate = String(day()) + "/" + String(month()) + "/" + String(year());
+
+  // Publish the time and date to MQTT
+  client.publish(MQTT_TOPIC_TIME, formattedDate.c_str()); // Send date
+  client.publish(MQTT_TOPIC_TIME, formattedTime.c_str()); // Send time
+
+  Serial.print("Current time sent to topic ");
+  Serial.println(MQTT_TOPIC_TIME);
+  Serial.println(formattedTime); // Print time
+  Serial.println(formattedDate); // Print date
+}
+
+
 
 // Fungsi untuk menghubungkan ke MQTT broker
 void connectToMQTT() {
@@ -450,10 +487,19 @@ String searchEmployeeID(int fingerprintID) {
   return employeeID;
 }
 
+// Fungsi untuk mengirimkan EmployeeID ke MQTT
+void sendToMQTT(String employeeID, int fingerprintID) {
+  Serial.print("Sidik jari cocok dengan EmployeeID: ");
+  Serial.println(employeeID);
+  
+  // Kirim pesan ke MQTT
+  String message = employeeID;
+  client.publish(MQTT_TOPIC_FINGERPRINT, message.c_str());
+  
+  // Konfirmasi bahwa pesan telah dikirim
+  Serial.println("Pesan terkirim ke MQTT: " + message + " dengan ID " + fingerprintID);
+}
 
-
-
-// Fungsi untuk menganalisis sidik jari dan mencari employeeID
 
 
 void setup() {
@@ -496,12 +542,8 @@ void loop() {
     
     // Memberikan feedback jika fingerprint ditemukan
     if (employeeID != "") {
-      Serial.print("Sidik jari cocok dengan EmployeeID: ");
-      Serial.println(employeeID);
-    
-      String message = employeeID;
-      client.publish(MQTT_TOPIC_FINGERPRINT, message.c_str());
-      Serial.println("terkirim ke MQTT." + message + " dengan ID " + fingerprintID);
+      sendToMQTT(employeeID, fingerprintID); // Kirim ke MQTT menggunakan fungsi baru
+      sendCurrentTime();  // Kirim waktu saat ini ke MQTT
     } else {
     
       Serial.println("Sidik jari ditemukan, tetapi tidak ada data EmployeeID yang terkait.");
